@@ -52,10 +52,7 @@ public:
     using RoomCode = std::size_t;
     Room &create_empty_room() {
         std::lock_guard lock(m_mutex);
-        return m_rooms.emplace(m_id_counter, Room()).first->second;
-    }
-    void join_room(std::shared_ptr<InChatSession>& session) {
-        std::terminate();
+        return m_rooms.emplace(m_id_counter++, Room()).first->second;
     }
     std::optional<std::reference_wrapper<Room>> get_room(RoomCode code) {
         std::lock_guard guard(m_mutex);
@@ -71,22 +68,26 @@ private:
     std::map<RoomCode, Room> m_rooms;
 };
 
-
 class Server{
 public:
     using tcp = net::ip::tcp;
+    using WebSocket = beast::websocket::stream<beast::tcp_stream>;
+    net::awaitable<std::pair<WebSocket, Room*>> prepare_session(WebSocket ws){
+        // check client json messages
+        // join or create here
+        co_return std::pair(std::move(ws), &m_room_manager.create_empty_room());
+    }
     net::awaitable<void> listener(net::ip::port_type port){
         auto executor = co_await net::this_coro::executor;
         tcp::acceptor acceptor(executor, tcp::endpoint(tcp::v4(), port));
         for(;;){
-            auto &room = m_room_manager.create_empty_room();
-            beast::websocket::stream<beast::tcp_stream> ws(
-                co_await acceptor.async_accept(net::use_awaitable)
-                );
-            auto session = std::make_shared<InChatSession>(std::move(ws), room);
+            auto [ws, room_ptr] = co_await prepare_session(
+                WebSocket{co_await acceptor.async_accept(net::use_awaitable)}
+            );
+            auto in_chat_session = std::make_shared<InChatSession>(std::move(ws), *room_ptr);
             net::co_spawn(
                 executor,
-                session->run(),
+                in_chat_session->run(),
                 net::detached
                 );
         }
