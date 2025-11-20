@@ -1,11 +1,11 @@
 ﻿find_package(Boost REQUIRED)
-find_package(nlohmann_json 3.12.0 REQUIRED)
+find_package(nlohmann_json 3.11.3 REQUIRED)
 
-
-
-
-
-add_executable (rtchat_server "rtchat_server.cpp" )
+add_executable (rtchat_server
+    "rtchat_server.cpp"
+    "json/json_impl.hpp"
+    "temp.hpp"
+)
 if (MSVC)
     target_compile_options(rtchat_server PRIVATE /bigobj)
 endif (MSVC)

@@ -2,29 +2,19 @@
 #include <boost/asio.hpp>
 #include "json/json_impl.hpp"
 
+#include <thread>
+
 namespace beast = boost::beast;
 namespace http = beast::http;
 namespace websocket = beast::websocket;
 namespace net = boost::asio;
 
-class InChatSession : public std::enable_shared_from_this<InChatSession> {
-    using Connection = beast::websocket::stream<beast::tcp_stream>;
-    InChatSession(Connection connection, Room &room) : m_connection(std::move(connection)), m_room(room) {}
-    
-    InChatSession(const InChatSession&) = delete;
-    InChatSession& operator=(const InChatSession&) = delete;
-
-    InChatSession(InChatSession&&) = delete;
-    InChatSession& operator=(InChatSession&&) = delete;
-
-private:
-    Room& m_room; // room outlives session
-    Connection m_connection;
-};
+class InChatSession;
 
 class Room {
 private:
     friend class RoomManager;
+    friend class InChatSession;
     void add_session(std::shared_ptr<InChatSession> session) {
         std::lock_guard lock(m_mutex);
         m_sessions.push_back(std::move(session));
@@ -33,13 +23,36 @@ private:
     std::vector<std::weak_ptr<InChatSession>> m_sessions{};
 };
 
+class InChatSession : public std::enable_shared_from_this<InChatSession> {
+public:
+    using Connection = beast::websocket::stream<beast::tcp_stream>;
+    InChatSession(Connection connection, Room &room)
+        : m_connection(std::move(connection)), m_room(room)
+    {
+        m_room.add_session(shared_from_this());
+    }
+
+    InChatSession(const InChatSession&) = delete;
+    InChatSession& operator=(const InChatSession&) = delete;
+
+    InChatSession(InChatSession&&) = delete;
+    InChatSession& operator=(InChatSession&&) = delete;
+
+    net::awaitable<void> run(){
+        co_return;
+    }
+
+private:
+    Room& m_room; // room outlives session
+    Connection m_connection;
+};
+
 class RoomManager {
 public:
     using RoomCode = std::size_t;
-    void create_room(std::shared_ptr<InChatSession> session) {
+    Room &create_empty_room() {
         std::lock_guard lock(m_mutex);
-        auto &room = m_rooms.emplace(m_id_counter, Room()).first->second;
-        room.add_session(std::move(session));
+        return m_rooms.emplace(m_id_counter, Room()).first->second;
     }
     void join_room(std::shared_ptr<InChatSession>& session) {
         std::terminate();
@@ -58,8 +71,46 @@ private:
     std::map<RoomCode, Room> m_rooms;
 };
 
-int main() {
-    auto session = std::make_shared<InChatSession>(std::move(ws));
-    m_room_manager.create_room(session);
 
+class Server{
+public:
+    using tcp = net::ip::tcp;
+    net::awaitable<void> listener(net::ip::port_type port){
+        auto executor = co_await net::this_coro::executor;
+        tcp::acceptor acceptor(executor, tcp::endpoint(tcp::v4(), port));
+        for(;;){
+            auto &room = m_room_manager.create_empty_room();
+            beast::websocket::stream<beast::tcp_stream> ws(
+                co_await acceptor.async_accept(net::use_awaitable)
+                );
+            auto session = std::make_shared<InChatSession>(std::move(ws), room);
+            net::co_spawn(
+                executor,
+                session->run(),
+                net::detached
+                );
+        }
+    }
+    static void start(net::ip::port_type port, std::size_t num_threads){
+        Server server;
+        net::io_context ioc(num_threads);
+        std::vector<std::jthread> runners;
+        runners.reserve(num_threads-1);
+        for(int i{};i<num_threads-1;++i){
+            runners.emplace_back([&ioc]{ioc.run();});
+        }
+        net::co_spawn(
+            ioc,
+            server.listener(port),
+            net::detached
+            );
+        ioc.run();
+    }
+private:
+    Server() = default;
+    RoomManager m_room_manager;
+};
+
+int main() {
+    Server::start(8888, 4);
 }
