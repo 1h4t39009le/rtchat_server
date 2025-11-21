@@ -25,7 +25,7 @@ struct ClientPrepareMessage {
 
 struct ServerPrepareResponse {
     std::optional<size_t> in_room_id;
-    std::optional<std::string> room_code;
+    std::optional<size_t> room_code;
     std::optional<std::string> error;
 };
 
