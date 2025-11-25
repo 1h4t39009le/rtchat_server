@@ -1,8 +1,8 @@
 ﻿#include <iostream>
+#include <deque>
 #include <boost/beast.hpp>
 #include <boost/asio.hpp>
 #include "json/json_impl.hpp"
-
 #include <thread>
 
 namespace beast = boost::beast;
@@ -10,7 +10,30 @@ namespace http = beast::http;
 namespace websocket = beast::websocket;
 namespace net = boost::asio;
 
-class InChatSession;
+class RoomMember;
+
+class LogOnCatch{
+public:
+    LogOnCatch(std::string source)
+        :m_source(std::move(source)){
+    }
+    void operator()(std::exception_ptr e){
+        if(e) try{
+            std::rethrow_exception(e);
+        }catch(std::exception &e){
+            std::cerr << std::format("Error in {}:{}", m_source, e.what());
+        }
+    }
+private:
+    std::string m_source;
+};
+bool session_ended(const boost::system::error_code& ec) {
+    return
+        ec == websocket::error::closed ||
+        ec == net::error::connection_reset ||
+        ec == net::error::eof
+        ;
+}
 
 class Room {
 public:
@@ -21,61 +44,119 @@ public:
     Code get_code() {
         return m_code;
     }
+    void sending(std::size_t id, const std::string &message){
+        broadcast_message(ServerRoomMessage{ServerRoomAction::Sended, id, message});
+    }
+    void leaving(std::size_t id){
+        {
+            std::lock_guard lock(m_mutex);
+            m_sessions.erase(id);
+        }
+        broadcast_message(ServerRoomMessage{ServerRoomAction::Leaved, id});
+    }
 private:
+    void broadcast_message(const nlohmann::json &data, std::optional<std::size_t> exclude_id = std::nullopt);
     friend class RoomManager;
-    friend class InChatSession;
-    std::size_t add_session(std::shared_ptr<InChatSession> session) {
-        std::lock_guard lock(m_mutex);
-        auto id = m_id_counter++;
-        m_sessions.emplace(id, std::move(session));
+    friend class RoomMember;
+    std::size_t add_session(std::shared_ptr<RoomMember> session) {
+        std::size_t id;
+        {
+            std::lock_guard lock(m_mutex);
+            id = m_id_counter++;
+            m_sessions.emplace(id, std::move(session));
+        }
+        broadcast_message(ServerRoomMessage{ServerRoomAction::Joined, id}, id);
         return id;
     }
     std::mutex m_mutex;
     Code m_code;
     std::size_t m_id_counter{};
-    std::unordered_map<std::size_t, std::weak_ptr<InChatSession>> m_sessions{};
+    std::unordered_map<std::size_t, std::weak_ptr<RoomMember>> m_sessions{};
 };
 
-bool session_ended(const boost::system::error_code& ec) {
-    return
-        ec == websocket::error::closed ||
-        ec == net::error::connection_reset ||
-        ec == net::error::eof
-        ;
-}
 
-class InChatSession : public std::enable_shared_from_this<InChatSession> {
+class RoomMember : public std::enable_shared_from_this<RoomMember> {
 public:
     using Connection = beast::websocket::stream<beast::tcp_stream>;
-    InChatSession(Connection connection, std::shared_ptr<Room> room)
+    RoomMember(Connection connection, std::shared_ptr<Room> room)
         : m_connection(std::move(connection)), m_room(room){
     }
-    InChatSession(const InChatSession&) = delete;
-    InChatSession& operator=(const InChatSession&) = delete;
+    RoomMember(const RoomMember&) = delete;
+    RoomMember& operator=(const RoomMember&) = delete;
+
+    void deliver(const std::string &message){
+        net::post(
+            m_connection.get_executor(),
+            [self = shared_from_this(), message]{
+                self->m_write_queue.push_back(message);
+                if(!self->m_is_writing){
+                    self->m_is_writing = true;
+                    net::co_spawn(
+                        self->m_connection.get_executor(),
+                        self->write_loop(),
+                        LogOnCatch("session write_loop")
+                    );
+                }
+            });
+    }
 
     net::awaitable<void> run(){
         auto room = m_room.lock();
         if (!room) co_return;
         auto self = shared_from_this();
-        auto id = room->add_session(self);
-        beast::flat_buffer buffer;
+        auto room_code = room->get_code();
+        m_id = room->add_session(self);
+        // session starts here
         try {
+            beast::flat_buffer buffer;
+            nlohmann::json start_response = ServerPrepareResponse{.client_id = m_id, .room_code = room_code};
+
+            deliver(start_response.dump());
             for (;;) {
-                co_await m_connection.async_write(net::buffer("Hi"), net::use_awaitable);
                 co_await m_connection.async_read(buffer, net::use_awaitable);
+                room->sending(m_id, beast::buffers_to_string(buffer.data()));
                 buffer.consume(buffer.size());
             }
         }
         catch (const boost::system::system_error& e) {
             if (session_ended(e.code())) {
                 std::cout << std::format("Session ended\n");
+
             } else throw;
         }
+        room->leaving(m_id);
     }
 private:
-    std::weak_ptr<Room> m_room; // room outlives session
+    net::awaitable<void> write_loop(){
+        try{
+            while(!m_write_queue.empty()){
+                const auto &msg = m_write_queue.front();
+                co_await m_connection.async_write(net::buffer(msg), net::use_awaitable);
+                m_write_queue.pop_front();
+            }
+        } catch(...) {}
+        m_is_writing = false;
+    }
+
+    std::size_t m_id;
     Connection m_connection;
+    std::weak_ptr<Room> m_room; // room outlives session
+
+    bool m_is_writing = false;
+    std::deque<std::string> m_write_queue;
 };
+
+void Room::broadcast_message(const nlohmann::json &data, std::optional<std::size_t> exclude_id){
+    auto serialized = data.dump();
+    std::lock_guard lock(m_mutex);
+    for(const auto &[id, weak_session] : m_sessions){
+        if(id == exclude_id) continue;
+        if(auto session = weak_session.lock()){
+            session->deliver(serialized);
+        }
+    }
+}
+
 
 class RoomManager {
 public:
@@ -95,7 +176,7 @@ public:
     }
 private:
     std::mutex m_mutex;
-    std::size_t m_id_counter;
+    std::size_t m_id_counter = 1000;
     std::unordered_map<Room::Code, std::shared_ptr<Room>> m_rooms;
 };
 
@@ -109,14 +190,21 @@ public:
     using WebSocket = beast::websocket::stream<beast::tcp_stream>;
 
     auto prepare_session(WebSocket ws)
-        -> net::awaitable<std::optional<std::shared_ptr<InChatSession>>>
+        -> net::awaitable<std::optional<std::shared_ptr<RoomMember>>>
     {
         std::cout << std::format("Preparing session with {}\n", ws.next_layer().socket().remote_endpoint().address().to_string());
+        auto send_error = [&](ServerPrepareError err_code) -> net::awaitable<void> {
+            nlohmann::json error_msg = ServerPrepareResponse{.error = err_code};
+            try {
+                co_await ws.async_write(net::buffer(error_msg.dump()), net::use_awaitable);
+                co_await ws.async_close(websocket::close_code::policy_error, net::use_awaitable);
+            } catch(...) {}
+        };
         try {
             co_await ws.async_accept(net::use_awaitable);
             beast::flat_buffer buffer;
-            co_await ws.async_read(buffer, net::use_awaitable);
 
+            co_await ws.async_read(buffer, net::use_awaitable);
             std::optional<ClientPrepareMessage> client_msg;
             try {
                 client_msg = nlohmann::json::parse(beast::buffers_to_string(buffer.data())).get<ClientPrepareMessage>();
@@ -124,19 +212,27 @@ public:
             }
             catch (...) {}
 
-            if (client_msg) {
-                switch (client_msg->action) {
-                    case ClientPrepareMessageAction::Create: {
-                        co_return std::make_shared<InChatSession>(std::move(ws), m_room_manager.create_empty_room());
-                    }
-                    case ClientPrepareMessageAction::Join:
-                        break;
-                }
+            if (!client_msg) {
+                co_await send_error(ServerPrepareError::InvalidJson);
+                co_return std::nullopt;
             }
-            else {
-                nlohmann::json error = { {"error", "Invalid message format"} };
-                co_await ws.async_write(net::buffer(error.dump()), net::use_awaitable);
-                co_await ws.async_close(websocket::close_code::unknown_data, net::use_awaitable);
+
+            switch (client_msg->action) {
+                case ClientPrepareAction::Create: {
+                    co_return std::make_shared<RoomMember>(std::move(ws), m_room_manager.create_empty_room());
+                }
+                case ClientPrepareAction::Join: {
+                    if (!client_msg->room_code){
+                        co_await send_error(ServerPrepareError::InvalidJson);
+                        co_return std::nullopt;
+                    }
+                    auto room = m_room_manager.get_room(*client_msg->room_code);
+                    if(!room){
+                        co_await send_error(ServerPrepareError::InvalidRoomCode);
+                        co_return std::nullopt;
+                    }
+                    co_return std::make_shared<RoomMember>(std::move(ws), std::move(*room));
+                }
             }
         }
         catch (const boost::system::system_error &e) {
@@ -144,7 +240,17 @@ public:
                 std::cerr << std::format("Error when preparing session {}\n", e.what());
             }
         }
+        try{
+            co_await ws.async_close(websocket::close_code::internal_error, net::use_awaitable);
+        } catch(...) {}
         co_return std::nullopt;
+    }
+
+    net::awaitable<void> run_session(WebSocket ws){
+        auto session = co_await prepare_session(std::move(ws));
+        if(session){
+            co_await (*session)->run();
+        }
     }
 
     net::awaitable<void> listener(net::ip::port_type port){
@@ -152,19 +258,12 @@ public:
         auto executor = co_await net::this_coro::executor;
         tcp::acceptor acceptor(executor, tcp::endpoint(tcp::v4(), port));
         for(;;){
-            if (auto in_chat_session = co_await prepare_session(WebSocket{ co_await acceptor.async_accept(net::use_awaitable) })) {
-                net::co_spawn(
-                    executor,
-                    (*in_chat_session)->run(),
-                [](std::exception_ptr e) {
-                    if (e) {
-                        try { std::rethrow_exception(e); }
-                        catch (std::exception& e) {
-                            std::cerr << "Error in session: " << e.what() << "\n";
-                        }
-                    }
-                });
-            }
+            WebSocket ws(co_await acceptor.async_accept(net::make_strand(executor), net::use_awaitable));
+            net::co_spawn(
+                executor,
+                run_session(std::move(ws)),
+                LogOnCatch("session")
+            );
         }
     }
     static void start(net::ip::port_type port, std::size_t num_threads){
@@ -177,15 +276,8 @@ public:
         }
         net::co_spawn(
             ioc,
-            server.listener(port), // SINGLE_LISTENER_SERVER 1
-            [](std::exception_ptr e) {
-                if (e) {
-                    try { std::rethrow_exception(e); }
-                    catch (std::exception& e) {
-                        std::cerr << "Error in listener: " << e.what() << "\n";
-                    }
-                }
-            });
+            server.listener(port),
+            LogOnCatch("listener"));
         ioc.run();
     }
 private:

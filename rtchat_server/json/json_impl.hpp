@@ -15,24 +15,41 @@ struct adl_serializer<std::optional<T>> {
 };
 NLOHMANN_JSON_NAMESPACE_END
 
-enum class ClientPrepareMessageAction { Join, Create };
+enum class ClientPrepareAction { Join, Create };
 
 struct ClientPrepareMessage {
-    ClientPrepareMessageAction action;
+    ClientPrepareAction action;
     std::string name;
-    std::optional<std::string> room_code;
+    std::optional<std::size_t> room_code;
 };
-
+enum class ServerPrepareError { InvalidJson, InvalidRoomCode};
 struct ServerPrepareResponse {
-    std::optional<size_t> in_room_id;
+    std::optional<size_t> client_id;
     std::optional<size_t> room_code;
-    std::optional<std::string> error;
+    std::optional<ServerPrepareError> error;
+};
+enum class ServerRoomAction { Sended, Joined, Leaved };
+struct ServerRoomMessage {
+    ServerRoomAction action;
+    std::size_t client_id;
+    std::optional<std::string> message;
 };
 
-NLOHMANN_JSON_SERIALIZE_ENUM(ClientPrepareMessageAction, {
-    {ClientPrepareMessageAction::Join, 0},
-    {ClientPrepareMessageAction::Create, 1},
+NLOHMANN_JSON_SERIALIZE_ENUM(ClientPrepareAction, {
+    {ClientPrepareAction::Join, 0},
+    {ClientPrepareAction::Create, 1},
+})
+NLOHMANN_JSON_SERIALIZE_ENUM(ServerRoomAction, {
+    {ServerRoomAction::Sended, 0},
+    {ServerRoomAction::Joined, 1},
+    {ServerRoomAction::Leaved, 2},
 })
 
+NLOHMANN_JSON_SERIALIZE_ENUM(ServerPrepareError, {
+    {ServerPrepareError::InvalidJson, 0},
+    {ServerPrepareError::InvalidRoomCode, 1},
+})
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(ClientPrepareMessage, action, name, room_code)
-NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(ServerPrepareResponse, in_room_id, room_code, error)
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(ServerPrepareResponse, client_id, room_code, error)
+
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(ServerRoomMessage, action, client_id, message)
