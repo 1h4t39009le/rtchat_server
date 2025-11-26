@@ -35,13 +35,13 @@ bool session_ended(const boost::system::error_code& ec) {
         ;
 }
 
+using RoomCode = std::size_t;
 class Room {
 public:
-    using Code = std::size_t;
-    Room(Code code) 
-        : m_code(code) {
+    Room(RoomCode code, std::function<void(RoomCode)> on_leave)
+        : m_on_leave(std::move(on_leave)), m_code(code) {
     }
-    Code get_code() {
+    RoomCode get_code() {
         return m_code;
     }
     void sending(std::size_t id, const std::string &message){
@@ -51,6 +51,10 @@ public:
         {
             std::lock_guard lock(m_mutex);
             m_sessions.erase(id);
+            m_is_dead = m_sessions.empty();
+        }
+        if(m_is_dead){
+            return m_on_leave(m_code);
         }
         broadcast_message(ServerRoomMessage{ServerRoomAction::Leaved, id});
     }
@@ -58,10 +62,11 @@ private:
     void broadcast_message(const nlohmann::json &data, std::optional<std::size_t> exclude_id = std::nullopt);
     friend class RoomManager;
     friend class RoomMember;
-    std::size_t add_session(std::shared_ptr<RoomMember> session) {
+    std::optional<std::size_t> add_session(std::shared_ptr<RoomMember> session) {
         std::size_t id;
         {
             std::lock_guard lock(m_mutex);
+            if(m_is_dead) return std::nullopt;
             id = m_id_counter++;
             m_sessions.emplace(id, std::move(session));
         }
@@ -69,7 +74,9 @@ private:
         return id;
     }
     std::mutex m_mutex;
-    Code m_code;
+    std::function<void(RoomCode)> m_on_leave;
+    bool m_is_dead = false;
+    RoomCode m_code;
     std::size_t m_id_counter{};
     std::unordered_map<std::size_t, std::weak_ptr<RoomMember>> m_sessions{};
 };
@@ -85,17 +92,27 @@ public:
     RoomMember& operator=(const RoomMember&) = delete;
 
     void deliver(const std::string &message){
+        send_impl(message);
+    }
+    void close_with_message(const std::string &message) {
+        send_impl(message, true);
+    }
+
+    void send_impl(const std::string &message, bool close_after = false){
         net::post(
             m_connection.get_executor(),
-            [self = shared_from_this(), message]{
+            [self = shared_from_this(), message = std::move(message), close_after]{
                 self->m_write_queue.push_back(message);
+                if(close_after){
+                    self->m_should_close = true;
+                }
                 if(!self->m_is_writing){
                     self->m_is_writing = true;
                     net::co_spawn(
                         self->m_connection.get_executor(),
-                        self->write_loop(),
+                        self->write_loop(std::move(self)),
                         LogOnCatch("session write_loop")
-                    );
+                        );
                 }
             });
     }
@@ -105,7 +122,12 @@ public:
         if (!room) co_return;
         auto self = shared_from_this();
         auto room_code = room->get_code();
-        m_id = room->add_session(self);
+        auto id_opt = room->add_session(self);
+        if(!id_opt) {
+            close_with_message(nlohmann::json(ServerPrepareResponse{.error = ServerPrepareError::InvalidRoomCode}).dump());
+            co_return;
+        }
+        m_id = *id_opt;
         // session starts here
         try {
             beast::flat_buffer buffer;
@@ -127,14 +149,18 @@ public:
         room->leaving(m_id);
     }
 private:
-    net::awaitable<void> write_loop(){
+    net::awaitable<void> write_loop(std::shared_ptr<RoomMember> self){
         try{
             while(!m_write_queue.empty()){
                 const auto &msg = m_write_queue.front();
                 co_await m_connection.async_write(net::buffer(msg), net::use_awaitable);
                 m_write_queue.pop_front();
             }
+            if (self->m_should_close) {
+                co_await self->m_connection.async_close(websocket::close_code::policy_error, net::use_awaitable);
+            }
         } catch(...) {}
+
         m_is_writing = false;
     }
 
@@ -142,6 +168,7 @@ private:
     Connection m_connection;
     std::weak_ptr<Room> m_room; // room outlives session
 
+    bool m_should_close = false;
     bool m_is_writing = false;
     std::deque<std::string> m_write_queue;
 };
@@ -160,13 +187,17 @@ void Room::broadcast_message(const nlohmann::json &data, std::optional<std::size
 
 class RoomManager {
 public:
-    
+
     std::shared_ptr<Room> create_empty_room() {
         std::lock_guard lock(m_mutex);
         auto code = m_id_counter++;
-        return m_rooms.emplace(code, std::make_shared<Room>(code)).first->second;
+        auto destroyer = [this](RoomCode code){
+            std::lock_guard lock(m_mutex);
+            m_rooms.erase(code);
+        };
+        return m_rooms.emplace(code, std::make_shared<Room>(code, destroyer)).first->second;
     }
-    std::optional<std::shared_ptr<Room>> get_room(Room::Code code) {
+    std::optional<std::shared_ptr<Room>> get_room(RoomCode code) {
         std::lock_guard lock(m_mutex);
         auto it = m_rooms.find(code);
         if (it != m_rooms.end()) {
@@ -177,7 +208,7 @@ public:
 private:
     std::mutex m_mutex;
     std::size_t m_id_counter = 1000;
-    std::unordered_map<Room::Code, std::shared_ptr<Room>> m_rooms;
+    std::unordered_map<RoomCode, std::shared_ptr<Room>> m_rooms;
 };
 
 
