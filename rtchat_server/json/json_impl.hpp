@@ -24,7 +24,8 @@ struct ClientPrepareMessage {
 };
 enum class ServerPrepareError { InvalidJson, InvalidRoomCode};
 struct ServerPrepareResponse {
-    std::optional<size_t> client_id;
+    size_t client_id;
+    std::unordered_map<size_t, std::string> client_names;
     std::optional<size_t> room_code;
     std::optional<ServerPrepareError> error;
 };

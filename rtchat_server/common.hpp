@@ -7,7 +7,7 @@ namespace http = beast::http;
 namespace websocket = beast::websocket;
 namespace net = boost::asio;
 
-bool session_ended(const boost::system::error_code& ec);
+bool SessionEnded(const boost::system::error_code& ec);
 class LogOnCatch{
 public:
     LogOnCatch(std::string source);

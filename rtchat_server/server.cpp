@@ -52,7 +52,7 @@ auto Server::prepare_session(WebSocket ws)
         }
     }
     catch (const boost::system::system_error &e) {
-        if (!session_ended(e.code())) {
+        if (!SessionEnded(e.code())) {
             std::cerr << std::format("Error when preparing session {}\n", e.what());
         }
     }

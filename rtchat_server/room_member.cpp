@@ -42,7 +42,7 @@ net::awaitable<void> RoomMember::run(){
     if (!room) co_return;
     auto self = shared_from_this();
     auto room_code = room->get_code();
-    auto id_opt = room->add_session(self);
+    auto id_opt = room->add_client(self);
     if(!id_opt) {
         close_with_message(nlohmann::json(ServerPrepareResponse{.error = ServerPrepareError::InvalidRoomCode}).dump());
         co_return;
@@ -51,9 +51,11 @@ net::awaitable<void> RoomMember::run(){
     // session starts here
     try {
         beast::flat_buffer buffer;
-        nlohmann::json start_response = ServerPrepareResponse{.client_id = m_id, .room_code = room_code};
+        nlohmann::json start_response = ServerPrepareResponse{.client_id = m_id, .client_names = room->get_client_names(), .room_code = room_code};
+
 
         deliver(start_response.dump());
+
         for (;;) {
             co_await m_connection.async_read(buffer, net::use_awaitable);
             room->sending(m_id, beast::buffers_to_string(buffer.data()));
@@ -61,7 +63,7 @@ net::awaitable<void> RoomMember::run(){
         }
     }
     catch (const boost::system::system_error& e) {
-        if (session_ended(e.code())) {
+        if (SessionEnded(e.code())) {
             std::cout << std::format("Session ended\n");
 
         } else throw;

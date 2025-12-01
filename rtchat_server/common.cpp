@@ -1,7 +1,7 @@
 #include "common.hpp"
 #include <iostream>
 
-bool session_ended(const boost::system::error_code& ec) {
+bool SessionEnded(const boost::system::error_code& ec) {
     return
         ec == websocket::error::closed ||
         ec == net::error::connection_reset ||
