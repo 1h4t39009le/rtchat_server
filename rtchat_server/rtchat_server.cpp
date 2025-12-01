@@ -302,13 +302,14 @@ public:
         net::io_context ioc(num_threads);
         std::vector<std::jthread> runners;
         runners.reserve(num_threads-1);
-        for(int i{};i<num_threads-1;++i){
-            runners.emplace_back([&ioc]{ioc.run();});
-        }
         net::co_spawn(
             ioc,
             server.listener(port),
             LogOnCatch("listener"));
+
+        for(int i{};i<num_threads-1;++i){
+            runners.emplace_back([&ioc]{ioc.run();});
+        }
         ioc.run();
     }
 private:
