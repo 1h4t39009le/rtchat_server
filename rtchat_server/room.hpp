@@ -1,4 +1,5 @@
 #pragma once
+#include "json/json_impl.hpp"
 class RoomManager;
 class RoomMember;
 using RoomCode = std::size_t;
@@ -23,6 +24,6 @@ private:
     RoomCode m_code;
     std::size_t m_id_counter{};
 
-    std::unordered_map<std::size_t, std::string> m_client_names{};
+    ClientNames m_client_names{};
     std::unordered_map<std::size_t, std::weak_ptr<RoomMember>> m_clients{};
 };

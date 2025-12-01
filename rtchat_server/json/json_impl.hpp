@@ -15,6 +15,27 @@ struct adl_serializer<std::optional<T>> {
 };
 NLOHMANN_JSON_NAMESPACE_END
 
+using ClientNames = std::unordered_map<size_t, std::string>;
+
+NLOHMANN_JSON_NAMESPACE_BEGIN
+template<>
+struct adl_serializer<ClientNames> {
+    static void to_json(json& j, const ClientNames& client_names) {
+        j = json::object();
+        for (const auto& [key, value] : client_names) {
+            j[std::to_string(key)] = value;  // Явное преобразование
+        }
+    }
+    static void from_json(const json& j, ClientNames& client_names) {
+        client_names.clear();
+        for (auto& [key_str, value] : j.items()) {
+            size_t key = std::stoull(key_str);
+            client_names[key] = value.get<std::string>();
+        }
+    }
+};
+NLOHMANN_JSON_NAMESPACE_END
+
 enum class ClientPrepareAction { Join, Create };
 
 struct ClientPrepareMessage {
@@ -25,7 +46,7 @@ struct ClientPrepareMessage {
 enum class ServerPrepareError { InvalidJson, InvalidRoomCode};
 struct ServerPrepareResponse {
     std::optional<size_t> client_id;
-    std::optional<std::unordered_map<size_t, std::string>> client_names;
+    std::optional<ClientNames> client_names;
     std::optional<size_t> room_code;
     std::optional<ServerPrepareError> error;
 };
