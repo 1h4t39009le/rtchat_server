@@ -24,8 +24,8 @@ struct ClientPrepareMessage {
 };
 enum class ServerPrepareError { InvalidJson, InvalidRoomCode};
 struct ServerPrepareResponse {
-    size_t client_id;
-    std::unordered_map<size_t, std::string> client_names;
+    std::optional<size_t> client_id;
+    std::optional<std::unordered_map<size_t, std::string>> client_names;
     std::optional<size_t> room_code;
     std::optional<ServerPrepareError> error;
 };
@@ -51,6 +51,6 @@ NLOHMANN_JSON_SERIALIZE_ENUM(ServerPrepareError, {
     {ServerPrepareError::InvalidRoomCode, 1},
 })
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(ClientPrepareMessage, action, name, room_code)
-NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(ServerPrepareResponse, client_id, room_code, error)
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(ServerPrepareResponse, client_id, client_names, room_code, error)
 
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(ServerRoomMessage, action, client_id, message_data)
