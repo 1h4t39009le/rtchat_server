@@ -2,17 +2,28 @@
 find_package(nlohmann_json 3.11.3 REQUIRED)
 
 add_executable (rtchat_server
-    "rtchat_server.cpp"
+    "main.cpp"
+    "common.hpp"
+    "common.cpp"
+    "room.hpp"
+    "room.cpp"
+    "room_member.hpp"
+    "room_member.cpp"
+    "room_manager.hpp"
+    "room_manager.cpp"
     "json/json_impl.hpp"
-    "temp.hpp"
+    "server.hpp"
+    "server.cpp"
 )
+
+
 if (MSVC)
     target_compile_options(rtchat_server PRIVATE /bigobj)
 endif (MSVC)
 
 target_precompile_headers(rtchat_server PRIVATE
-    <boost/beast.hpp>
     <boost/asio.hpp>
+    <boost/beast.hpp>
     <nlohmann/json.hpp>
 )
 

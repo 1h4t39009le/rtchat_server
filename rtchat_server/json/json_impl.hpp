@@ -32,7 +32,7 @@ enum class ServerRoomAction { Sended, Joined, Leaved };
 struct ServerRoomMessage {
     ServerRoomAction action;
     std::size_t client_id;
-    std::optional<std::string> message;
+    std::optional<std::string> message_data;
 };
 
 NLOHMANN_JSON_SERIALIZE_ENUM(ClientPrepareAction, {
@@ -52,4 +52,4 @@ NLOHMANN_JSON_SERIALIZE_ENUM(ServerPrepareError, {
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(ClientPrepareMessage, action, name, room_code)
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(ServerPrepareResponse, client_id, room_code, error)
 
-NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(ServerRoomMessage, action, client_id, message)
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE(ServerRoomMessage, action, client_id, message_data)
