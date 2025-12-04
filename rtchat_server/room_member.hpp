@@ -17,7 +17,7 @@ public:
     void deliver(const std::string &message);
     void close_with_message(const std::string &message);
     void send_impl(const std::string &message, bool close_after = false);
-    net::awaitable<void> run();
+    net::awaitable<void> run(http::request<http::string_body> req);
 
     std::string const &get_name() const;
 

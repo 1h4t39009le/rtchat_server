@@ -37,9 +37,10 @@ std::string const & RoomMember::get_name() const {
     return m_name;
 }
 
-net::awaitable<void> RoomMember::run(){
+net::awaitable<void> RoomMember::run(http::request<http::string_body> req){
     auto room = m_room.lock();
     if (!room) co_return;
+    co_await m_connection.async_accept(req, net::use_awaitable);
     auto self = shared_from_this();
     auto room_code = room->get_code();
     auto id_opt = room->add_client(self);

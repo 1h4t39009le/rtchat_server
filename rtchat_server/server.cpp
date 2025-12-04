@@ -24,18 +24,19 @@ net::awaitable<void> Server::send_bad_response(
 
 net::awaitable<void> Server::handle_create_route(
     beast::tcp_stream stream,
+    http::request<http::string_body> req,
     std::string name
     ){
     auto room_member = std::make_shared<RoomMember>(
         name,
         websocket::stream<beast::tcp_stream>(std::move(stream)),
         m_room_manager.create_empty_room());
-    co_await room_member->run();
+    co_await room_member->run(std::move(req));
 }
 
 net::awaitable<void> Server::handle_join_route(
     beast::tcp_stream stream,
-    const http::request<http::string_body> &req,
+    http::request<http::string_body> req,
     std::string name,
     std::size_t room_code
     ){
@@ -44,7 +45,7 @@ net::awaitable<void> Server::handle_join_route(
             name,
             websocket::stream<beast::tcp_stream>(std::move(stream)),
             std::move(*room));
-        co_await room_member->run();
+        co_await room_member->run(std::move(req));
     } else co_await send_bad_response(std::move(stream), req, http::status::not_found, "unknown room");
 }
 
@@ -66,12 +67,12 @@ net::awaitable<void> Server::run_session(tcp::socket socket) {
     if(name_param != params.end()){
         auto segment = url.segments().front();
         if(segment == "create"){
-            co_return co_await handle_create_route(std::move(stream), std::move((*name_param).value));
+            co_return co_await handle_create_route(std::move(stream), std::move(req), std::move((*name_param).value));
         }else if(room_code_param != params.end() && segment == "join"){
             std::stringstream ss(std::move((*room_code_param).value));
             std::size_t room_code;
             ss >> room_code;
-            co_return co_await handle_join_route(std::move(stream), req, std::move((*name_param).value), room_code);
+            co_return co_await handle_join_route(std::move(stream), std::move(req), std::move((*name_param).value), room_code);
         }
     }
     co_await send_bad_response(std::move(stream), req, http::status::bad_request, "Invalid request or params");

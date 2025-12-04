@@ -14,10 +14,10 @@ public:
         http::status status,
         std::string body_text
     );
-    net::awaitable<void> handle_create_route(beast::tcp_stream stream,std::string name);
+    net::awaitable<void> handle_create_route(beast::tcp_stream stream,http::request<http::string_body> req,std::string name);
     net::awaitable<void> handle_join_route(
         beast::tcp_stream stream,
-        const http::request<http::string_body> &req,
+        http::request<http::string_body> req,
         std::string name,
         std::size_t room_code
     );

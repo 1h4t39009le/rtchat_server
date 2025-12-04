@@ -15,6 +15,11 @@ add_executable (rtchat_server
     "server.hpp"
     "server.cpp"
 )
+
+if (MSVC)
+    target_compile_options(rtchat_server PRIVATE /bigobj)
+endif (MSVC)
+
 target_precompile_headers(rtchat_server PRIVATE
     <boost/asio.hpp>
     <boost/beast.hpp>
