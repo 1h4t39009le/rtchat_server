@@ -63,16 +63,17 @@ net::awaitable<void> Server::run_session(tcp::socket socket) {
     boost::url_view url(req.target());
     std::string response_body;
     auto params = url.params();
-    auto name_param = params.find("name"), room_code_param = params.find("room");
-    if(name_param != params.end()){
+    auto name_it = params.find("name"), room_code_it = params.find("room");
+    if(name_it != params.end()){
         auto segment = url.segments().front();
+        std::string name = (*name_it).value;
         if(segment == "create"){
-            co_return co_await handle_create_route(std::move(stream), std::move(req), std::move((*name_param).value));
-        }else if(room_code_param != params.end() && segment == "join"){
-            std::stringstream ss(std::move((*room_code_param).value));
+            co_return co_await handle_create_route(std::move(stream), std::move(req), std::move(name));
+        }else if(room_code_it != params.end() && segment == "join"){
+            std::stringstream ss((*room_code_it).value);
             std::size_t room_code;
             ss >> room_code;
-            co_return co_await handle_join_route(std::move(stream), std::move(req), std::move((*name_param).value), room_code);
+            co_return co_await handle_join_route(std::move(stream), std::move(req), std::move(name), room_code);
         }
     }
     co_await send_bad_response(std::move(stream), req, http::status::bad_request, "Invalid request or params");
