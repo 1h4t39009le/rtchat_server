@@ -11,7 +11,6 @@ public:
     std::unordered_map<size_t, std::string> get_client_names();
     void sending(std::size_t id, const std::string &message);
     void leaving(std::size_t id);
-
 private:
     void broadcast_message(const nlohmann::json &data, std::optional<std::size_t> exclude_id = std::nullopt);
     friend class RoomManager;

@@ -1,72 +1,80 @@
 #include "server.hpp"
-#include "json/json_impl.hpp"
+#include <boost/url.hpp>
 #include "room_member.hpp"
 #include <iostream>
 #include <memory>
 #include <thread>
 
-auto Server::prepare_session(WebSocket ws)
-    -> net::awaitable<std::optional<std::shared_ptr<RoomMember>>>
-{
-    std::cout << std::format("Preparing session with {}\n", ws.next_layer().socket().remote_endpoint().address().to_string());
-    auto send_error = [&](ServerPrepareError err_code) -> net::awaitable<void> {
-        nlohmann::json error_msg = ServerPrepareResponse{.error = err_code};
-        try {
-            co_await ws.async_write(net::buffer(error_msg.dump()), net::use_awaitable);
-            co_await ws.async_close(websocket::close_code::policy_error, net::use_awaitable);
-        } catch(...) {}
-    };
-    try {
-        co_await ws.async_accept(net::use_awaitable);
-        beast::flat_buffer buffer;
-
-        co_await ws.async_read(buffer, net::use_awaitable);
-        std::optional<ClientPrepareMessage> client_msg;
-        try {
-            client_msg = nlohmann::json::parse(beast::buffers_to_string(buffer.data())).get<ClientPrepareMessage>();
-            buffer.consume(buffer.size());
-        }
-        catch (...) {}
-
-        if (!client_msg) {
-            co_await send_error(ServerPrepareError::InvalidJson);
-            co_return std::nullopt;
-        }
-
-        switch (client_msg->action) {
-        case ClientPrepareAction::Create: {
-            co_return std::make_shared<RoomMember>(client_msg->name, std::move(ws), m_room_manager.create_empty_room());
-        }
-        case ClientPrepareAction::Join: {
-            if (!client_msg->room_code){
-                co_await send_error(ServerPrepareError::InvalidJson);
-                co_return std::nullopt;
-            }
-            auto room = m_room_manager.get_room(*client_msg->room_code);
-            if(!room){
-                co_await send_error(ServerPrepareError::InvalidRoomCode);
-                co_return std::nullopt;
-            }
-            co_return std::make_shared<RoomMember>(client_msg->name, std::move(ws), std::move(*room));
-        }
-        }
-    }
-    catch (const boost::system::system_error &e) {
-        if (!SessionEnded(e.code())) {
-            std::cerr << std::format("Error when preparing session {}\n", e.what());
-        }
-    }
-    try{
-        co_await ws.async_close(websocket::close_code::internal_error, net::use_awaitable);
-    } catch(...) {}
-    co_return std::nullopt;
+net::awaitable<void> Server::send_bad_response(
+    beast::tcp_stream stream,
+    const http::request<http::string_body> &req,
+    http::status status,
+    std::string body_text
+    ){
+    http::response<http::string_body> res{status, req.version()};
+    res.set(http::field::server, "RTCHATServer");
+    res.set(http::field::content_type, "text/plain");
+    res.keep_alive(false);
+    res.body() = std::move(body_text);
+    res.prepare_payload();
+    co_await http::async_write(stream, res, net::use_awaitable);
+    beast::error_code ec;
+    stream.socket().shutdown(tcp::socket::shutdown_send, ec);
 }
 
-net::awaitable<void> Server::run_session(WebSocket ws){
-    auto session = co_await prepare_session(std::move(ws));
-    if(session){
-        co_await (*session)->run();
+net::awaitable<void> Server::handle_create_route(
+    beast::tcp_stream stream,
+    std::string name
+    ){
+    auto room_member = std::make_shared<RoomMember>(
+        name,
+        websocket::stream<beast::tcp_stream>(std::move(stream)),
+        m_room_manager.create_empty_room());
+    co_await room_member->run();
+}
+
+net::awaitable<void> Server::handle_join_route(
+    beast::tcp_stream stream,
+    const http::request<http::string_body> &req,
+    std::string name,
+    std::size_t room_code
+    ){
+    if(auto room = m_room_manager.get_room(room_code)){
+        auto room_member = std::make_shared<RoomMember>(
+            name,
+            websocket::stream<beast::tcp_stream>(std::move(stream)),
+            std::move(*room));
+        co_await room_member->run();
+    } else co_await send_bad_response(std::move(stream), req, http::status::not_found, "unknown room");
+}
+
+net::awaitable<void> Server::run_session(tcp::socket socket) {
+    beast::tcp_stream stream(std::move(socket));
+    http::request<http::string_body> req;
+    beast::flat_buffer buffer;
+
+    co_await http::async_read(stream, buffer, req, net::use_awaitable);
+    if(!websocket::is_upgrade(req)) {
+        co_return co_await send_bad_response(std::move(stream), req, http::status::upgrade_required, "websocket upgrade required");
     }
+
+    std::cout << req.target() << '\n';
+    boost::url_view url(req.target());
+    std::string response_body;
+    auto params = url.params();
+    auto name_param = params.find("name"), room_code_param = params.find("room");
+    if(name_param != params.end()){
+        auto segment = url.segments().front();
+        if(segment == "create"){
+            co_return co_await handle_create_route(std::move(stream), std::move((*name_param).value));
+        }else if(room_code_param != params.end() && segment == "join"){
+            std::stringstream ss(std::move((*room_code_param).value));
+            std::size_t room_code;
+            ss >> room_code;
+            co_return co_await handle_join_route(std::move(stream), req, std::move((*name_param).value), room_code);
+        }
+    }
+    co_await send_bad_response(std::move(stream), req, http::status::bad_request, "Invalid request or params");
 }
 
 net::awaitable<void> Server::listener(net::ip::port_type port){
@@ -74,11 +82,10 @@ net::awaitable<void> Server::listener(net::ip::port_type port){
     auto executor = co_await net::this_coro::executor;
     tcp::acceptor acceptor(executor, tcp::endpoint(tcp::v4(), port));
     for(;;){
-        WebSocket ws(co_await acceptor.async_accept(net::make_strand(executor), net::use_awaitable));
         net::co_spawn(
             executor,
-            run_session(std::move(ws)),
-            LogOnCatch("session")
+            run_session(co_await acceptor.async_accept(net::make_strand(executor), net::use_awaitable)),
+            LogOnCatch("run_session")
             );
     }
 }
