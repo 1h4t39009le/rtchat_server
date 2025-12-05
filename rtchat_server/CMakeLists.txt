@@ -1,4 +1,5 @@
-﻿find_package(Boost REQUIRED COMPONENTS url)
+﻿set(Boost_USE_STATIC_LIBS ON)
+find_package(Boost REQUIRED COMPONENTS url)
 find_package(nlohmann_json 3.11.3)
 
 add_executable (rtchat_server

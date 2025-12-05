@@ -47,7 +47,7 @@ enum class ServerPrepareError { InvalidJson, InvalidRoomCode};
 struct ServerPrepareResponse {
     std::optional<size_t> client_id;
     std::optional<ClientNames> client_names;
-    std::optional<size_t> room_code;
+    std::optional<std::string> room_code;
     std::optional<ServerPrepareError> error;
 };
 enum class ServerRoomAction { Sended, Joined, Leaved };

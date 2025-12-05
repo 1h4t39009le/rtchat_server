@@ -2,12 +2,12 @@
 #include "json/json_impl.hpp"
 class RoomManager;
 class RoomMember;
-using RoomCode = std::size_t;
+using RoomCode = std::string;
 
 class Room {
 public:
-    Room(RoomCode code, std::function<void(RoomCode)> on_leave);
-    RoomCode get_code();
+    Room(RoomCode code, std::function<void(const RoomCode &)> on_leave);
+    RoomCode const & get_code();
     std::unordered_map<size_t, std::string> get_client_names();
     void sending(std::size_t id, const std::string &message);
     void leaving(std::size_t id);

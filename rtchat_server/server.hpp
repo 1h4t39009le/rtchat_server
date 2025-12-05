@@ -19,7 +19,7 @@ public:
         beast::tcp_stream stream,
         http::request<http::string_body> req,
         std::string name,
-        std::size_t room_code
+        std::string room_code
     );
 
     net::awaitable<void> run_session(tcp::socket socket);

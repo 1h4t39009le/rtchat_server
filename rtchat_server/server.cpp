@@ -38,7 +38,7 @@ net::awaitable<void> Server::handle_join_route(
     beast::tcp_stream stream,
     http::request<http::string_body> req,
     std::string name,
-    std::size_t room_code
+    std::string room_code
     ){
     if(auto room = m_room_manager.get_room(room_code)){
         auto room_member = std::make_shared<RoomMember>(
@@ -70,10 +70,8 @@ net::awaitable<void> Server::run_session(tcp::socket socket) {
         if(segment == "create"){
             co_return co_await handle_create_route(std::move(stream), std::move(req), std::move(name));
         }else if(room_code_it != params.end() && segment == "join"){
-            std::stringstream ss((*room_code_it).value);
-            std::size_t room_code;
-            ss >> room_code;
-            co_return co_await handle_join_route(std::move(stream), std::move(req), std::move(name), room_code);
+            std::string room_code = (*room_code_it).value;
+            co_return co_await handle_join_route(std::move(stream), std::move(req), std::move(name), std::move(room_code));
         }
     }
     co_await send_bad_response(std::move(stream), req, http::status::bad_request, "Invalid request or params");

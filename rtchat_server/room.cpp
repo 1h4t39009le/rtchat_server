@@ -2,10 +2,10 @@
 #include "room_member.hpp"
 #include "room.hpp"
 
-Room::Room(RoomCode code, std::function<void(RoomCode)> on_leave)
-    : m_on_leave(std::move(on_leave)), m_code(code) {
+Room::Room(RoomCode code, std::function<void(const RoomCode&)> on_leave)
+    : m_on_leave(std::move(on_leave)), m_code(std::move(code)) {
 }
-RoomCode Room::get_code() {
+RoomCode const& Room::get_code() {
     return m_code;
 }
 std::unordered_map<size_t, std::string> Room::get_client_names(){
@@ -18,7 +18,7 @@ void Room::leaving(std::size_t id){
     {
         std::lock_guard lock(m_mutex);
         m_clients.erase(id);
-        m_clients.erase(id);
+        m_client_names.erase(id);
         m_is_dead = m_clients.empty();
     }
     if(m_is_dead){
