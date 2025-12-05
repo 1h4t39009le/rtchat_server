@@ -1,5 +1,6 @@
 #pragma once
-#include "json/json_impl.hpp"
+#include "json_impl.hpp"
+#include <mutex>
 class RoomManager;
 class RoomMember;
 using RoomCode = std::string;
