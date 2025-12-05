@@ -1,6 +1,6 @@
 #include "server.hpp"
 #include <boost/url.hpp>
-#include "room_member.hpp"
+#include "room/room_member.hpp"
 #include <iostream>
 #include <memory>
 #include <thread>
@@ -89,7 +89,7 @@ net::awaitable<void> Server::listener(net::ip::port_type port){
             );
     }
 }
-void Server::start(net::ip::port_type port, std::size_t num_threads){
+void Server::start(net::ip::port_type port, int num_threads){
     Server server;
     net::io_context ioc(num_threads);
     std::vector<std::jthread> runners;

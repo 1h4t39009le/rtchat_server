@@ -7,5 +7,5 @@ add_library(RoomLib
 if (MSVC)
     target_compile_options(RoomLib PRIVATE /bigobj)
 endif (MSVC)
-target_include_directories(RoomLib PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+target_include_directories(RoomLib PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/..)
 target_link_libraries(RoomLib PUBLIC CommonLib)

@@ -1,6 +1,6 @@
-#include "json_impl.hpp"
+#include "common/common.hpp"
+#include "common/json_impl.hpp"
 #include <iostream>
-#include "common.hpp"
 #include "room_member.hpp"
 
 RoomMember::RoomMember(std::string name, Connection connection, std::shared_ptr<Room> room)
